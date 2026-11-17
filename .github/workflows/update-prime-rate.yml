@@ -13,15 +13,27 @@ permissions:
 jobs:
   update-data:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Download latest FRED prime-rate observations
         run: |
           python - <<'PY'
-          import csv, json, urllib.request
+          import csv, json, urllib.request, time
           url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DPRIME"
-          request = urllib.request.Request(url, headers={"User-Agent": "Prime-Rate-Tracker/1.0"})
-          with urllib.request.urlopen(request, timeout=30) as response:
-              rows = list(csv.DictReader(response.read().decode("utf-8-sig").splitlines()))
+          request = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 Prime-Rate-Tracker/1.0"})
+          last_error = None
+          for attempt in range(5):
+              try:
+                  with urllib.request.urlopen(request, timeout=120) as response:
+                      rows = list(csv.DictReader(response.read().decode("utf-8-sig").splitlines()))
+                  break
+              except Exception as error:
+                  last_error = error
+                  print(f"FRED download attempt {attempt + 1} failed: {error}")
+                  if attempt < 4:
+                      time.sleep(15 * (attempt + 1))
+          else:
+              raise SystemExit(f"FRED download failed after 5 attempts: {last_error}")
           data = []
           for row in rows:
               date = row.get("observation_date") or row.get("DATE")
