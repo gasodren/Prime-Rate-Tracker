@@ -1,0 +1,62 @@
+name: Update Federal Prime Rate Data
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "30 13 * * 1-5"
+
+permissions:
+  contents: write
+
+jobs:
+  update-data:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download latest FRED prime-rate observations
+        run: |
+          python - <<'PY'
+          import csv, json, urllib.request
+          url = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=DPRIME"
+          request = urllib.request.Request(url, headers={"User-Agent": "Prime-Rate-Tracker/1.0"})
+          with urllib.request.urlopen(request, timeout=30) as response:
+              rows = list(csv.DictReader(response.read().decode("utf-8-sig").splitlines()))
+          data = []
+          for row in rows:
+              date = row.get("observation_date") or row.get("DATE")
+              value = row.get("DPRIME")
+              if date and value and value.strip() not in ("", "."):
+                  data.append({"date": date, "value": float(value)})
+          if not data:
+              raise SystemExit("FRED returned no usable prime-rate observations")
+          with open("data.json", "w", encoding="utf-8") as file:
+              json.dump(data, file, separators=(",", ":"))
+          print(f"Saved {len(data)} observations; latest: {data[-1]}")
+          PY
+      - name: Publish data file to main branch
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = 'data.json';
+            const content = fs.readFileSync(path, 'utf8');
+            let sha;
+            try {
+              const existing = await github.rest.repos.getContent({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                path,
+                ref: 'main'
+              });
+              sha = existing.data.sha;
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
+            await github.rest.repos.createOrUpdateFileContents({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              path,
+              message: 'Update Federal Prime Rate data',
+              content: Buffer.from(content).toString('base64'),
+              branch: 'main',
+              ...(sha ? { sha } : {})
+            });
